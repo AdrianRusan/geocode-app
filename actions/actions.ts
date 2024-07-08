@@ -12,7 +12,7 @@ if (!apiKey) {
 }
 
 const cache = new NodeCache({ stdTTL: 3600 });
-const limit = pLimit(5);
+const limit = pLimit(10);
 
 export const fetchGeocodeData = async (lat: number, lon: number): Promise<GeocodeResponse> => {
   const cacheKey = `${lat},${lon}`;

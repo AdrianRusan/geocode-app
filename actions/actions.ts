@@ -8,7 +8,7 @@ import { Coordinate, GeocodeResponse, Result, GeocodeResult } from '@/types/type
 const apiKey = process.env.GOOGLE_MAPS_API_KEY;
 
 if (!apiKey) {
-  throw new Error('Api Key is missing');
+  throw new Error('GOOGLE_MAPS_API_KEY environment variable is missing');
 }
 
 const cache = new NodeCache({ stdTTL: 3600 });
@@ -27,11 +27,19 @@ export const fetchGeocodeData = async (lat: number, lon: number): Promise<Geocod
       params: { latlng: `${lat},${lon}`, key: apiKey },
     });
 
+    if (response.data.status !== 'OK') {
+      throw new Error(`Geocode API Error: ${response.data.status}`);
+    }
+
     cache.set(cacheKey, response.data);
     return response.data;
   } catch (error) {
-    console.error(`Error fetching geocode data for ${lat},${lon}:`, error);
-    throw error;
+    if (axios.isAxiosError(error)) {
+      console.error(`Error fetching geocode data for ${lat},${lon}: ${error.message}`);
+    } else {
+      console.error(`Unexpected error fetching geocode data for ${lat},${lon}: ${error}`);
+    }
+    throw new Error('Failed to fetch geocode data');
   }
 };
 
@@ -52,9 +60,15 @@ export const processCoordinate = async ({ LOC_ID, lat, lon }: Coordinate): Promi
 
   try {
     const response = await fetchGeocodeData(lat, lon);
+
+    if (response.results.length === 0) {
+      console.warn(`No geocode results for ${lat},${lon}`);
+      return dynamicResult;
+    }
+
     response.results.forEach(result => extractAddressComponents(result, dynamicResult, lat));
   } catch (error) {
-    console.error(`Error processing coordinates ${lat}, ${lon}:`, error);
+    console.error(`Error processing coordinates ${lat}, ${lon}: ${error}`);
   }
 
   return dynamicResult;
@@ -62,66 +76,75 @@ export const processCoordinate = async ({ LOC_ID, lat, lon }: Coordinate): Promi
 
 export const processCoordinatesConcurrently = async (coordinates: Coordinate[]): Promise<Result[]> => {
   const tasks = coordinates.map(coordinate => limit(() => processCoordinate(coordinate)));
-  const results = await Promise.all(tasks);
-  return results;
+  try {
+    const results = await Promise.all(tasks);
+    return results;
+  } catch (error) {
+    console.error('Error processing coordinates concurrently:', error);
+    throw new Error('Failed to process coordinates');
+  }
 };
 
-const extractAddressComponents = (result: GeocodeResult, dynamicResult: Result, lat: any) => {
+const extractAddressComponents = (result: GeocodeResult, dynamicResult: Result, lat: number) => {
   const typesSet = new Set(result.types);
 
   result.address_components.forEach(component => {
     const { types, long_name, short_name } = component;
     const componentTypesSet = new Set(types);
 
-    if (typesSet.has('premise')) {
-      if (componentTypesSet.has('premise')) {
-        dynamicResult.address1 = long_name;
+    try {
+      if (typesSet.has('premise')) {
+        if (componentTypesSet.has('premise')) {
+          dynamicResult.address1 = long_name;
+        }
+        if (componentTypesSet.has('street_number')) {
+          dynamicResult.address2 = `${long_name} `;
+        }
+        if (componentTypesSet.has('route')) {
+          dynamicResult.address2 += long_name;
+        }
+        if (componentTypesSet.has('locality')) {
+          dynamicResult.city = long_name;
+        }
+        if (componentTypesSet.has('administrative_area_level_1')) {
+          dynamicResult.stateShort = short_name;
+          dynamicResult.state = long_name;
+        }
+        if (componentTypesSet.has('postal_code')) {
+          dynamicResult.zip = long_name;
+        }
+        if (componentTypesSet.has('country')) {
+          dynamicResult.country = short_name;
+        }
       }
-      if (componentTypesSet.has('street_number')) {
-        dynamicResult.address2 = `${long_name} `;
+
+      if (typesSet.has('route') && !dynamicResult.address2) {
+        if (componentTypesSet.has('street_number')) {
+          dynamicResult.address2 = `${long_name} `;
+        }
+        if (componentTypesSet.has('route')) {
+          dynamicResult.address2 += long_name;
+        }
       }
-      if (componentTypesSet.has('route')) {
-        dynamicResult.address2 += long_name;
-      }
-      if (componentTypesSet.has('locality')) {
+
+      if (typesSet.has('locality') && componentTypesSet.has('locality') && !dynamicResult.city) {
         dynamicResult.city = long_name;
       }
-      if (componentTypesSet.has('administrative_area_level_1')) {
+
+      if (typesSet.has('administrative_area_level_1') && componentTypesSet.has('administrative_area_level_1') && !dynamicResult.stateShort) {
         dynamicResult.stateShort = short_name;
         dynamicResult.state = long_name;
       }
-      if (componentTypesSet.has('postal_code')) {
+
+      if (typesSet.has('postal_code') && componentTypesSet.has('postal_code') && !dynamicResult.zip) {
         dynamicResult.zip = long_name;
       }
-      if (componentTypesSet.has('country')) {
+
+      if (typesSet.has('country') && componentTypesSet.has('country') && !dynamicResult.country) {
         dynamicResult.country = short_name;
       }
-    }
-
-    if (typesSet.has('route') && !dynamicResult.address2) {
-      if (componentTypesSet.has('street_number')) {
-        dynamicResult.address2 = `${long_name} `;
-      }
-      if (componentTypesSet.has('route')) {
-        dynamicResult.address2 += long_name;
-      }
-    }
-
-    if (typesSet.has('locality') && componentTypesSet.has('locality') && !dynamicResult.city) {
-      dynamicResult.city = long_name;
-    }
-
-    if (typesSet.has('administrative_area_level_1') && componentTypesSet.has('administrative_area_level_1') && !dynamicResult.stateShort) {
-      dynamicResult.stateShort = short_name;
-      dynamicResult.state = long_name;
-    }
-
-    if (typesSet.has('postal_code') && componentTypesSet.has('postal_code') && !dynamicResult.zip) {
-      dynamicResult.zip = long_name;
-    }
-
-    if (typesSet.has('country') && componentTypesSet.has('country') && !dynamicResult.country) {
-      dynamicResult.country = short_name;
+    } catch (error) {
+      console.error(`Error extracting address components for ${lat}: ${error}`);
     }
   });
 

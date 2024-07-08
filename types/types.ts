@@ -61,4 +61,5 @@ export interface GeocodeResult {
 
 export interface GeocodeResponse {
   results: GeocodeResult[];
+  status: string;
 }

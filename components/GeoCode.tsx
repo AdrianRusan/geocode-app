@@ -17,7 +17,10 @@ export default function GeoCode() {
   }, []);
 
   const handleUpload = useCallback(async () => {
-    if (!file) return;
+    if (!file) {
+      setError('No file selected. Please select a file to upload.');
+      return;
+    }
 
     try {
       const coordinates = await parseCSV(file);
@@ -25,7 +28,11 @@ export default function GeoCode() {
       setResults(resultsData);
       setError(null);
     } catch (error) {
-      setError('An error occurred while processing the file.');
+      if (error instanceof Error) {
+        setError(`An error occurred while processing the file: ${error.message}`);
+      } else {
+        setError('An unexpected error occurred while processing the file.');
+      }
       console.error(error);
     }
   }, [file]);

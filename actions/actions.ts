@@ -1,6 +1,5 @@
 'use server';
 
-export const maxDuration = 60;
 import axios from 'axios';
 import NodeCache from 'node-cache';
 import pLimit from 'p-limit'
@@ -13,7 +12,7 @@ if (!apiKey) {
 }
 
 const cache = new NodeCache({ stdTTL: 3600 });
-const limit = pLimit(25);
+const limit = pLimit(5);
 
 export const fetchGeocodeData = async (lat: number, lon: number): Promise<GeocodeResponse> => {
   const cacheKey = `${lat},${lon}`;
